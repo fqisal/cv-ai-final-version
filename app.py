@@ -8,14 +8,15 @@ import time
 app = Flask(__name__)
 
 # إعدادات SharePoint - غير القيم فقط
+import os
+
 SHAREPOINT_CONFIG = {
-    'tenant_id': 'aa8f14be-df21-409d-8ac3-aed9c521f126',
-    'client_id': '056747fa-0c7e-4eb3-91ee-f6eef2b826a9',
-    'client_secret': 'hBi8Q~YIoCffRaXW8zlgBqdfonf1sB4hPcIWlcyV',
+    'tenant_id': os.getenv('TENANT_ID', 'aa8f14be-df21-409d-8ac3-aed9c521f126'),
+    'client_id': os.getenv('CLIENT_ID', '056747fa-0c7e-4eb3-91ee-f6eef2b826a9'),
+    'client_secret': os.getenv('CLIENT_SECRET', 'hBi8Q~YIoCffRaXW8zlgBqdfonf1sB4hPcIWlcyV'),
     'site_url': 'https://dcc961.sharepoint.com/sites/SmartHiringPortal',
     'list_name': 'AI Processing Queue'
 }
-
 def get_sharepoint_access_token():
     """الحصول على access token لـ SharePoint"""
     try:
