@@ -5,6 +5,8 @@ import io
 from apscheduler.schedulers.background import BackgroundScheduler
 import time
 import os
+from office365.runtime.auth.client_credentials import ClientCredential
+from office365.sharepoint.client_context import ClientContext
 
 app = Flask(__name__)
 
@@ -86,18 +88,40 @@ def update_application_status(item_id, results):
         print(f"Error updating application: {e}")
         return False
 
-def extract_text_from_pdf(pdf_url):
-    """استخراج النص من PDF"""
+def download_file_from_sharepoint(file_url):
+    """تحميل الملف من SharePoint باستخدام صلاحيات الوصول"""
     try:
-        response = requests.get(pdf_url)
-        pdf_file = io.BytesIO(response.content)
+        # إنشاء اتصال مع SharePoint باستخدام بيانات الاعتماد
+        ctx = ClientContext(SHAREPOINT_CONFIG['site_url']).with_credentials(
+            ClientCredential(
+                f"{SHAREPOINT_CONFIG['client_id']}@{SHAREPOINT_CONFIG['tenant_id']}",
+                SHAREPOINT_CONFIG['client_secret']
+            )
+        )
         
-        pdf_reader = PyPDF2.PdfReader(pdf_file)
-        text = ""
+        # استخراج المسار النسبي للملف من الرابط الكامل
+        relative_url = file_url.split(SHAREPOINT_CONFIG['site_url'])[1]
         
-        for page in pdf_reader.pages:
-            text += page.extract_text() + "\n"
-            
+        # تحميل الملف
+        download_path = os.path.join(os.getcwd(), 'downloaded_file.pdf')
+        with open(download_path, "wb") as local_file:
+            file = ctx.web.get_file_by_server_relative_url(relative_url).get().execute_query()
+            file.stream.readInto(local_file)
+        
+        return download_path
+    except Exception as e:
+        print(f"Error downloading file from SharePoint: {e}")
+        return None
+
+def extract_text_from_pdf(file_path):
+    """استخراج النص من PDF من مسار ملف محلي"""
+    try:
+        with open(file_path, 'rb') as pdf_file:
+            pdf_reader = PyPDF2.PdfReader(pdf_file)
+            text = ""
+            for page in pdf_reader.pages:
+                text += page.extract_text() + "\n"
+        
         return text
     except Exception as e:
         return f"Error: {str(e)}"
@@ -151,8 +175,15 @@ def process_sharepoint_queue():
             
             print(f"Processing application {item_id}")
             
-            # استخراج النص من PDF
-            cv_text = extract_text_from_pdf(pdf_url)
+            # تحميل الملف من SharePoint
+            file_path = download_file_from_sharepoint(pdf_url)
+            
+            if not file_path:
+                print(f"Failed to download PDF for application {item_id}. Skipping.")
+                continue
+            
+            # استخراج النص من الملف الذي تم تحميله
+            cv_text = extract_text_from_pdf(file_path)
             
             if cv_text.startswith("Error"):
                 print(f"Error extracting PDF for {item_id}: {cv_text}")
@@ -170,6 +201,10 @@ def process_sharepoint_queue():
             else:
                 print(f"❌ Failed to update application {item_id}")
             
+            # بعد الانتهاء من المعالجة، احذف الملف لتوفير المساحة
+            if os.path.exists(file_path):
+                os.remove(file_path)
+        
         except Exception as e:
             print(f"❌ Error processing application {item_id}: {e}")
 
@@ -193,14 +228,24 @@ def analyze():
         if not pdf_url or not keywords:
             return jsonify({"error": "Missing pdf_url or keywords"}), 400
         
-        # استخراج النص من PDF
-        cv_text = extract_text_from_pdf(pdf_url)
+        # تحميل الملف من SharePoint
+        file_path = download_file_from_sharepoint(pdf_url)
+        
+        if not file_path:
+            return jsonify({"error": "Failed to download PDF"}), 400
+        
+        # استخراج النص من الملف الذي تم تحميله
+        cv_text = extract_text_from_pdf(file_path)
         
         if cv_text.startswith("Error"):
             return jsonify({"error": cv_text}), 400
         
         # تحليل النص
         result = analyze_cv(cv_text, keywords)
+        
+        # حذف الملف بعد الانتهاء
+        if os.path.exists(file_path):
+            os.remove(file_path)
         
         return jsonify(result)
         
